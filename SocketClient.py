@@ -6,51 +6,94 @@ class SocketClient (General):
 	def __init__ (self, host = "localhost", port = 8080, _buffer = 1024):
 		self.host = host;
 		self.port = port;
-		self.buffer = _buffer;
+		self._buffer = _buffer;
 		self.socket = socket.socket();
-		self.receiving = False
-		self.connected = False
+		self.receiving = False; # This variable determines whether the client socket is receiving data or not
+		self.connected = False; # This variable determines wheether the client socket is connected or not
 
 		# Callback definitions
 		self.onConnectCallback = self.emptyFunction;
 		self.onReceiveCallback = self.emptyFunction;
 		self.onSendCallback = self.emptyFunction;
+		self.onDisconnectCallback = self.emptyFunction;
+
 
 	def emptyFunction (self, *args, **kwargs):
 		pass;
 
-	def connect (self, callback):
+
+	def connect (self, callback, _async = False):
+		if not self.connected:
+			if _async:
+				self.setImmediate(self.onBeforeConnectCallback, {"callback": callback});
+			else:
+				self.onBeforeConnectCallback(callback = callback);
+
+
+	def onBeforeConnectCallback (self, **kwargs):
 		try:
 			self.socket.connect((self.host, self.port));
 			self.connected = True;
-			callback(True, None);
+			self.Clock = Clock();
+
+			kwargs["callback"](True, None);
 		except Exception as e:
-			callback(False, e);
+			kwargs["callback"](False, e);
 
-	def recv (self, async = False):
-		self.receive(async);
 
-	def receive (self, async = False):
-		if async:
-			self.setImmediate(self.processReceivedData);
+	def startRecvFrom (self, client, _async = False):
+		self.startReceivingFromServer(client, _async);
+
+
+	def startReceivingFromServer (self, _async = False):
+		if _async:
+			def method ():
+				self.receive();
+				
+			self.setInterval(method, 1);
 		else:
-			self.processReceivedData();
+			while True:
+				self.receive();
+
+
+	def recv (self, _async = False):
+		self.receive(_async);
+
+
+	def receive (self, _async = False):
+		if self.connected:
+			if _async:
+				self.setImmediate(self.processReceivedData);
+			else:
+				self.processReceivedData();
+
 
 	def processReceivedData (self):
 		try:
-			data = self.socket.recv(self._buffer).decode("utf-8");
-			data = self.jsonize(data);
+			data = self.socket.recv(self._buffer); # Receive data from server
+			data = data.decode("utf-8"); # Decode the received data
+			if not data == "":
+				data = self.jsonize(data); # Convert the data to json format (i.e: dict)
 
-			self.onReceiveCallback(data, None);
+				self.onReceiveCallback(data, None);
 		except Exception as e:
 			self.onReceiveCallback(False, e);
 
-	def send (self, data):
+
+	def send (self, data, _async = False):
+		if self.connected:
+			if _async:
+				self.setImmediate(self.onBeforeSendCallback, {"data": data});
+			else:
+				self.onBeforeSendCallback(data = data)
+
+
+	def onBeforeSendCallback (self, **kwargs):
 		try:
 			data = {
-				"date": "date",
-				"time": "time",
-				"data": data
+				"date": self.Clock.date(),
+				"time": self.Clock.time(),
+				"data": kwargs["data"]
 			}
 
 			self.socket.send(self.unjsonize(data).encode("utf-8"));
@@ -59,15 +102,23 @@ class SocketClient (General):
 		except Exception as e:
 			self.onSendCallback(False, e);
 
+
 	def onReceive (self, callback):
 		self.onReceiveCallback = callback;
 
-	def onSend (self, callaback):
+
+	def onSend (self, callback):
 		self.onSendCallback = callback;
 
+
+	def onDisconnect (self, callback):
+		self.onDisconnectCallback = callback;
+
+
 	def disconnect (self):
-		self.socket.close();
-		
+		if self.connected:
+			self.socket.close();
+
 if __name__ == '__main__':
 	client = SocketClient();
 
@@ -79,12 +130,29 @@ if __name__ == '__main__':
 
 	def onReceive (data, err):
 		if err:
-			print("Sorry, an error occurred!");
+			print("No data receieved!");
+			print(err);
 		else:
 			print("Received data from server!");
 			print(data);
 			
-	client.connect(onConnect);
+	def onSend (data, err):
+		if err:
+			print("An error occurred while sending data.");
+			print(err);
+		else:
+			print("successfully sent data to server!");
 
-	client.send("Hello server!");
+	client.connect(onConnect);
+	client.onReceive(onReceive);
+	client.onSend(onSend);
+
+	client.send("Hello server! I've arrived");
 	client.receive();
+
+	client.Clock.wait(5);
+	client.send("Are you still there?");
+
+	client.Clock.wait(5);
+	client.send("I'm going to disconnect now!");
+	client.disconnect();
